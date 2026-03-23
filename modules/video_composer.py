@@ -128,15 +128,13 @@ def compose_with_ffmpeg(
         for clip in scene_clips:
             f.write(f"file '{clip}'\n")
 
-    # 전체 연결 + 최종 인코딩
+    # 전체 연결 (copy 모드 - 재인코딩 없이 빠른 합성)
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0",
         "-i", str(concat_list_path),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c", "copy",
         "-movflags", "+faststart",
-        "-pix_fmt", "yuv420p",
         output_path,
     ]
 
@@ -155,30 +153,25 @@ def compose_with_ffmpeg(
 
 def _create_clip_image_audio(image_path: str, audio_path: str, output_path: str,
                              scene: dict, fallback_duration: float):
-    """이미지 + 오디오 → 비디오 클립 (Ken Burns 효과 포함)"""
+    """이미지 + 오디오 → 비디오 클립 (경량 합성)"""
     # 오디오 길이 측정
     audio_dur = _get_audio_duration(audio_path)
     if audio_dur <= 0:
         audio_dur = fallback_duration
 
-    # Ken Burns (줌인) 효과 - 자연스러운 움직임
-    camera = scene.get("visual", {}).get("camera", {})
-    movement = camera.get("movement", "zoom-in")
-    zoom_filter = _get_ffmpeg_zoom_filter(movement, audio_dur)
-
+    # 단순 스케일링 (메모리 절약 - zoompan 제거)
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1",
         "-i", image_path,
         "-i", audio_path,
-        "-vf", f"scale=1920:1080:force_original_aspect_ratio=decrease,"
-               f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
-               f"{zoom_filter}",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
-        "-pix_fmt", "yuv420p",
+        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
+               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+               "format=yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-c:a", "aac", "-b:a", "128k",
         "-shortest",
-        "-t", str(audio_dur + 0.5),  # 약간의 여유
+        "-t", str(audio_dur + 0.3),
         output_path,
     ]
 
@@ -193,10 +186,10 @@ def _create_clip_image_only(image_path: str, output_path: str, duration: float):
         "-i", image_path,
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+               "format=yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-c:a", "aac", "-b:a", "128k",
-        "-pix_fmt", "yuv420p",
         "-t", str(duration),
         output_path,
     ]
@@ -216,13 +209,13 @@ def _create_clip_video_audio(video_path: str, audio_path: str, output_path: str,
         "-i", video_path,
         "-i", audio_path,
         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
+               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+               "format=yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-c:a", "aac", "-b:a", "128k",
         "-map", "0:v:0", "-map", "1:a:0",
-        "-pix_fmt", "yuv420p",
         "-shortest",
-        "-t", str(audio_dur + 0.5),
+        "-t", str(audio_dur + 0.3),
         output_path,
     ]
 
@@ -235,10 +228,10 @@ def _create_clip_video_only(video_path: str, output_path: str, duration: float):
         "ffmpeg", "-y",
         "-i", video_path,
         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
-        "-pix_fmt", "yuv420p",
+               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+               "format=yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-c:a", "aac", "-b:a", "128k",
         "-t", str(duration),
         output_path,
     ]
@@ -248,33 +241,18 @@ def _create_clip_video_only(video_path: str, output_path: str, duration: float):
 
 def _create_clip_audio_only(audio_path: str, output_path: str,
                              subtitle_text: str, duration: float):
-    """오디오만 → 검은 배경 + 텍스트 오버레이"""
+    """오디오만 → 검은 배경 영상"""
     audio_dur = _get_audio_duration(audio_path)
     if audio_dur <= 0:
         audio_dur = duration
 
-    # 자막 텍스트 이스케이프
-    safe_text = subtitle_text.replace("'", "'\\''").replace(":", "\\:").replace("%", "%%")
-    if len(safe_text) > 80:
-        # 줄바꿈 삽입
-        mid = len(safe_text) // 2
-        space_idx = safe_text.find(" ", mid)
-        if space_idx > 0:
-            safe_text = safe_text[:space_idx] + "\\n" + safe_text[space_idx+1:]
-
-    vf = (f"scale=1920:1080,"
-          f"drawtext=text='{safe_text}':"
-          f"fontsize=42:fontcolor=white:"
-          f"x=(w-text_w)/2:y=(h-text_h)/2:"
-          f"borderw=3:bordercolor=black")
-
+    # drawtext 없이 단순 검은 배경 (한글 폰트 문제 회피)
     cmd = [
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c=0x1a1b2e:s=1920x1080:d={audio_dur + 0.5}:r=30",
+        "-f", "lavfi", "-i", f"color=c=0x1a1b2e:s=1920x1080:d={audio_dur + 0.3}:r=24",
         "-i", audio_path,
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-c:a", "aac", "-b:a", "128k",
         "-pix_fmt", "yuv420p",
         "-shortest",
         output_path,
