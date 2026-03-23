@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LANstar YouTube Automation</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',-apple-system,sans-serif; background:#0f1117; color:#e4e4e7; }
+.header { background:linear-gradient(135deg,#1a1b2e,#16213e); padding:20px 32px; border-bottom:1px solid #2a2d3e; display:flex; justify-content:space-between; align-items:center; }
+.header h1 { font-size:22px; color:#fff; }
+.header .status { font-size:12px; color:#9ca3af; }
+.header .status .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+.header .status .dot.on { background:#34d399; }
+.header .status .dot.off { background:#fb7185; }
+nav { background:#1a1b2e; border-bottom:1px solid #2a2d3e; padding:0 32px; display:flex; gap:4px; overflow-x:auto; }
+nav button { padding:12px 20px; border:none; background:transparent; color:#9ca3af; cursor:pointer; font-size:14px; border-bottom:2px solid transparent; white-space:nowrap; }
+nav button:hover { color:#fff; }
+nav button.active { color:#3b82f6; border-bottom-color:#3b82f6; }
+.container { max-width:1200px; margin:0 auto; padding:24px; }
+.card { background:#1a1b2e; border:1px solid #2a2d3e; border-radius:12px; padding:20px; margin-bottom:16px; }
+.card h3 { font-size:16px; color:#fff; margin-bottom:12px; }
+.kpi-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:20px; }
+.kpi { background:#1a1b2e; border:1px solid #2a2d3e; border-radius:10px; padding:16px; text-align:center; }
+.kpi .label { font-size:11px; color:#9ca3af; text-transform:uppercase; }
+.kpi .value { font-size:24px; font-weight:700; color:#fff; margin-top:4px; }
+.btn { padding:10px 20px; border-radius:8px; border:none; cursor:pointer; font-size:14px; font-weight:600; transition:all .2s; }
+.btn-primary { background:#3b82f6; color:#fff; }
+.btn-primary:hover { background:#2563eb; }
+.btn-secondary { background:#374151; color:#e4e4e7; }
+.btn-secondary:hover { background:#4b5563; }
+.btn:disabled { opacity:.5; cursor:not-allowed; }
+input,select,textarea { background:#252736; border:1px solid #2a2d3e; border-radius:8px; padding:10px 14px; color:#fff; font-size:14px; width:100%; }
+input::placeholder,textarea::placeholder { color:#6b7280; }
+label { display:block; font-size:13px; color:#9ca3af; margin-bottom:4px; }
+.form-group { margin-bottom:14px; }
+.form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { background:#252736; color:#9ca3af; text-align:left; padding:10px 12px; position:sticky; top:0; }
+td { padding:10px 12px; border-bottom:1px solid #2a2d3e; }
+tr:hover { background:#1e2030; }
+a { color:#60a5fa; text-decoration:none; }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+.badge-green { background:#064e3b; color:#34d399; }
+.badge-blue { background:#1e3a5f; color:#60a5fa; }
+.badge-yellow { background:#422006; color:#fbbf24; }
+.loading { text-align:center; padding:40px; color:#6b7280; }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+.result-box { background:#0f1117; border:1px solid #2a2d3e; border-radius:8px; padding:16px; margin-top:12px; max-height:500px; overflow-y:auto; }
+pre { font-size:12px; white-space:pre-wrap; word-break:break-all; }
+.toast { position:fixed; bottom:20px; right:20px; padding:12px 20px; border-radius:8px; font-size:14px; z-index:1000; animation:fadeIn .3s; }
+.toast-success { background:#064e3b; color:#34d399; border:1px solid #34d399; }
+.toast-error { background:#4c0519; color:#fb7185; border:1px solid #fb7185; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+.empty { text-align:center; padding:40px; color:#6b7280; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📺 LANstar YouTube Automation</h1>
+  <div class="status" id="apiStatus"></div>
+</div>
+
+<nav id="nav">
+  <button class="active" data-tab="overview">개요</button>
+  <button data-tab="generate">스크립트 생성</button>
+  <button data-tab="remake">리메이크</button>
+  <button data-tab="scripts">스크립트 목록</button>
+  <button data-tab="competition">경쟁 분석</button>
+  <button data-tab="schedule">업로드 스케줄</button>
+</nav>
+
+<div class="container">
+
+<!-- 개요 탭 -->
+<div class="tab-content active" id="tab-overview">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="card">
+    <h3>📊 채널 분석 대시보드</h3>
+    <p style="color:#9ca3af;margin-bottom:12px">908개 전체 영상의 성과 분석, 카테고리별 통계, 리메이크 후보</p>
+    <a href="/dashboard" target="_blank" class="btn btn-primary">대시보드 열기 →</a>
+  </div>
+  <div class="card">
+    <h3>🏆 조회수 TOP 10</h3>
+    <div id="topVideosTable"></div>
+  </div>
+</div>
+
+<!-- 스크립트 생성 탭 -->
+<div class="tab-content" id="tab-generate">
+  <div class="card">
+    <h3>📝 AI 스크립트 생성</h3>
+    <p style="color:#9ca3af;margin-bottom:16px">제품 정보를 입력하면 Claude AI가 Video Notation Schema에 맞는 전체 스크립트를 생성합니다.</p>
+    <div class="form-row">
+      <div class="form-group"><label>제품명 *</label><input id="genProduct" placeholder="예: HDMI 분배기"></div>
+      <div class="form-group"><label>모델명</label><input id="genModel" placeholder="예: LS-HD2SP"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>카테고리</label>
+        <select id="genCategory">
+          <option value="네트워크/서버">네트워크/서버</option>
+          <option value="홈오피스/재택">홈오피스/재택</option>
+          <option value="영상/방송">영상/방송</option>
+          <option value="선정리/인테리어">선정리/인테리어</option>
+          <option value="트러블슈팅">트러블슈팅</option>
+        </select>
+      </div>
+      <div class="form-group"><label>제품 특징 (쉼표 구분)</label><input id="genFeatures" placeholder="예: 4K 지원, 4포트, HDCP 2.2"></div>
+    </div>
+    <div class="form-group"><label>타겟 페르소나</label><input id="genPersona" placeholder="예: 재택근무 3년차 직장인"></div>
+    <div class="form-group"><label>시청자 고통점</label><textarea id="genPain" rows="2" placeholder="예: 모니터 2대에 HDMI 하나로 어떻게 연결하는지 모름"></textarea></div>
+    <button class="btn btn-primary" id="btnGenerate" onclick="generateScript()">🤖 스크립트 생성</button>
+    <div id="generateResult"></div>
+  </div>
+</div>
+
+<!-- 리메이크 탭 -->
+<div class="tab-content" id="tab-remake">
+  <div class="card">
+    <h3>🔄 리메이크 후보</h3>
+    <p style="color:#9ca3af;margin-bottom:16px">높은 조회수 + 오래된 영상을 AI 스토리텔링으로 리메이크</p>
+    <div id="remakeList"></div>
+  </div>
+</div>
+
+<!-- 스크립트 목록 탭 -->
+<div class="tab-content" id="tab-scripts">
+  <div class="card">
+    <h3>📋 생성된 스크립트</h3>
+    <div id="scriptsList"></div>
+  </div>
+</div>
+
+<!-- 경쟁 분석 탭 -->
+<div class="tab-content" id="tab-competition">
+  <div class="card">
+    <h3>🔍 키워드 경쟁 분석</h3>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input id="compKeyword" placeholder="키워드 입력 (예: HDMI, USB, 와이파이)" style="flex:1">
+      <button class="btn btn-primary" onclick="analyzeCompetition()">분석</button>
+    </div>
+    <div id="compResult"></div>
+  </div>
+</div>
+
+<!-- 스케줄 탭 -->
+<div class="tab-content" id="tab-schedule">
+  <div class="card">
+    <h3>📅 업로드 스케줄</h3>
+    <p style="color:#9ca3af;margin-bottom:16px">생성된 스크립트로 주간 업로드 스케줄을 자동 생성합니다.</p>
+    <div id="scheduleContent"></div>
+  </div>
+</div>
+
+</div>
+
+<script>
+const API = '';
+
+// 탭 전환
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'scripts') loadScripts();
+    if (btn.dataset.tab === 'remake') loadRemake();
+    if (btn.dataset.tab === 'schedule') loadScheduleUI();
+  });
+});
+
+function fmt(n) {
+  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+  return n?.toString() || '0';
+}
+
+function toast(msg, type='success') {
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + type;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// 헬스체크 + KPI
+async function init() {
+  try {
+    const h = await fetch(API + '/api/health').then(r=>r.json());
+    const keys = Object.entries(h.api_keys).map(([k,v]) =>
+      `<span class="dot ${v?'on':'off'}"></span>${k}`
+    ).join(' &nbsp; ');
+    document.getElementById('apiStatus').innerHTML = keys;
+
+    const stats = await fetch(API + '/api/channel/stats').then(r=>r.json());
+    document.getElementById('kpiRow').innerHTML = `
+      <div class="kpi"><div class="label">구독자</div><div class="value">${fmt(stats.subscriberCount)}</div></div>
+      <div class="kpi"><div class="label">총 영상</div><div class="value">${stats.totalVideos?.toLocaleString()}</div></div>
+      <div class="kpi"><div class="label">총 조회수</div><div class="value">${fmt(stats.totalViews)}</div></div>
+      <div class="kpi"><div class="label">평균 조회수</div><div class="value">${fmt(stats.avgViews)}</div></div>
+      <div class="kpi"><div class="label">평균 참여도</div><div class="value">${stats.avgEngagement}%</div></div>
+    `;
+
+    const top = await fetch(API + '/api/channel/top-videos?limit=10').then(r=>r.json());
+    let html = '<table><thead><tr><th>#</th><th>제목</th><th>조회수</th><th>참여도</th></tr></thead><tbody>';
+    top.forEach((v,i) => {
+      html += `<tr><td>${i+1}</td><td><a href="${v.url}" target="_blank">${v.title}</a></td>
+        <td>${fmt(v.viewCount)}</td><td>${v.engagementRate}%</td></tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('topVideosTable').innerHTML = html;
+  } catch(e) {
+    document.getElementById('apiStatus').innerHTML = '<span class="dot off"></span>서버 연결 실패';
+  }
+}
+
+// 스크립트 생성
+async function generateScript() {
+  const btn = document.getElementById('btnGenerate');
+  btn.disabled = true; btn.textContent = '⏳ 생성 중... (1~2분 소요)';
+
+  try {
+    const features = document.getElementById('genFeatures').value;
+    const res = await fetch(API + '/api/script/generate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        product_name: document.getElementById('genProduct').value,
+        product_model: document.getElementById('genModel').value,
+        category: document.getElementById('genCategory').value,
+        product_features: features ? features.split(',').map(s=>s.trim()) : [],
+        target_persona: document.getElementById('genPersona').value,
+        pain_point: document.getElementById('genPain').value,
+      })
+    }).then(r=>r.json());
+
+    if (res.success) {
+      toast('스크립트 생성 완료!');
+      document.getElementById('generateResult').innerHTML = `
+        <div class="result-box">
+          <p><strong>📝 ${res.title}</strong></p>
+          <p>장면 수: ${res.scenes}개 | SEO 점수: <span class="badge badge-green">${res.seo_score}/100</span></p>
+          <p>파일: ${res.filename}</p>
+          <details style="margin-top:8px"><summary style="cursor:pointer;color:#60a5fa">JSON 보기</summary>
+          <pre>${JSON.stringify(res.script, null, 2)}</pre></details>
+        </div>`;
+    } else {
+      toast(res.detail || '생성 실패', 'error');
+    }
+  } catch(e) {
+    toast('오류: ' + e.message, 'error');
+  }
+  btn.disabled = false; btn.textContent = '🤖 스크립트 생성';
+}
+
+// 리메이크 후보
+async function loadRemake() {
+  const list = await fetch(API + '/api/channel/remake-candidates?limit=15').then(r=>r.json());
+  let html = '<table><thead><tr><th>#</th><th>제목</th><th>조회수</th><th>경과일</th><th>점수</th><th></th></tr></thead><tbody>';
+  list.forEach((v,i) => {
+    html += `<tr><td>${i+1}</td><td>${v.title}</td><td>${fmt(v.viewCount)}</td>
+      <td>${v.ageDays}일</td><td><span class="badge badge-yellow">${v.remakeScore}</span></td>
+      <td><button class="btn btn-secondary" onclick="remakeScript(${i+1})" style="padding:4px 12px;font-size:12px">리메이크</button></td></tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('remakeList').innerHTML = html;
+}
+
+async function remakeScript(rank) {
+  toast('리메이크 스크립트 생성 중...');
+  try {
+    const res = await fetch(API + '/api/script/remake', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ rank })
+    }).then(r=>r.json());
+    if (res.success) {
+      toast(`리메이크 완료! SEO ${res.seo_score}점`);
+    }
+  } catch(e) { toast('오류: '+e.message,'error'); }
+}
+
+// 스크립트 목록
+async function loadScripts() {
+  const scripts = await fetch(API + '/api/scripts').then(r=>r.json());
+  if (!scripts.length) {
+    document.getElementById('scriptsList').innerHTML = '<div class="empty">아직 생성된 스크립트가 없습니다.</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>제목</th><th>카테고리</th><th>장면수</th><th>생성일</th></tr></thead><tbody>';
+  scripts.forEach(s => {
+    html += `<tr><td><a href="/api/scripts/${s.filename}" target="_blank">${s.title || s.filename}</a></td>
+      <td><span class="badge badge-blue">${s.category}</span></td>
+      <td>${s.scenes}</td><td>${s.created?.slice(0,10)}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('scriptsList').innerHTML = html;
+}
+
+// 경쟁 분석
+async function analyzeCompetition() {
+  const kw = document.getElementById('compKeyword').value;
+  if (!kw) return;
+  const res = await fetch(API + '/api/seo/competition', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ keyword: kw })
+  }).then(r=>r.json());
+  document.getElementById('compResult').innerHTML = `
+    <div class="result-box">
+      <p><strong>"${res.keyword}"</strong> 분석 결과</p>
+      <p>기존 영상: ${res.existing_videos}개</p>
+      ${res.avg_views ? `<p>평균 조회수: ${fmt(res.avg_views)} | 최고: ${fmt(res.max_views)}</p>` : ''}
+      ${res.top_video ? `<p>TOP 영상: ${res.top_video}</p>` : ''}
+      <p><strong>${res.recommendation}</strong></p>
+    </div>`;
+}
+
+// 스케줄
+async function loadScheduleUI() {
+  const scripts = await fetch(API + '/api/scripts').then(r=>r.json());
+  if (!scripts.length) {
+    document.getElementById('scheduleContent').innerHTML = '<div class="empty">스크립트를 먼저 생성하세요.</div>';
+    return;
+  }
+  let html = '<p style="color:#9ca3af;margin-bottom:12px">스크립트 '+scripts.length+'개 기반 스케줄:</p>';
+  try {
+    const schedule = await fetch(API + '/api/schedule/create', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ script_ids: scripts.map(s=>s.filename) })
+    }).then(r=>r.json());
+    html += '<table><thead><tr><th>요일</th><th>예약 시간</th><th>제목</th></tr></thead><tbody>';
+    schedule.forEach(s => {
+      html += `<tr><td>${s.day_of_week}</td><td>${s.scheduled_time?.slice(0,16)}</td><td>${s.title}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  } catch(e) { html += '<p>스케줄 생성 실패</p>'; }
+  document.getElementById('scheduleContent').innerHTML = html;
+}
+
+init();
+</script>
+</body>
+</html>

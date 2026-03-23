@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+.env.local
+output/last_raw_response.txt
+output/pipeline_report_*.json
+output/tts_*/
+output/media_*/
+*.mp3
+*.mp4
+.youtube_token.json
+client_secret.json
+node_modules/
