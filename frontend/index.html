@@ -29,6 +29,10 @@ nav button.active { color:#3b82f6; border-bottom-color:#3b82f6; }
 .btn-primary:hover { background:#2563eb; }
 .btn-secondary { background:#374151; color:#e4e4e7; }
 .btn-secondary:hover { background:#4b5563; }
+.btn-success { background:#059669; color:#fff; }
+.btn-success:hover { background:#047857; }
+.btn-warning { background:#d97706; color:#fff; }
+.btn-warning:hover { background:#b45309; }
 .btn:disabled { opacity:.5; cursor:not-allowed; }
 input,select,textarea { background:#252736; border:1px solid #2a2d3e; border-radius:8px; padding:10px 14px; color:#fff; font-size:14px; width:100%; }
 input::placeholder,textarea::placeholder { color:#6b7280; }
@@ -44,6 +48,7 @@ a { color:#60a5fa; text-decoration:none; }
 .badge-green { background:#064e3b; color:#34d399; }
 .badge-blue { background:#1e3a5f; color:#60a5fa; }
 .badge-yellow { background:#422006; color:#fbbf24; }
+.badge-red { background:#4c0519; color:#fb7185; }
 .loading { text-align:center; padding:40px; color:#6b7280; }
 .tab-content { display:none; }
 .tab-content.active { display:block; }
@@ -54,6 +59,28 @@ pre { font-size:12px; white-space:pre-wrap; word-break:break-all; }
 .toast-error { background:#4c0519; color:#fb7185; border:1px solid #fb7185; }
 @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
 .empty { text-align:center; padding:40px; color:#6b7280; }
+
+/* 파이프라인 스테퍼 */
+.pipeline-stepper { display:flex; align-items:center; gap:0; margin:20px 0; }
+.step { flex:1; text-align:center; position:relative; }
+.step-circle { width:48px; height:48px; border-radius:50%; border:3px solid #374151; background:#1a1b2e; display:flex; align-items:center; justify-content:center; margin:0 auto 8px; font-size:20px; transition:all .3s; }
+.step.active .step-circle { border-color:#3b82f6; background:#1e3a5f; box-shadow:0 0 12px rgba(59,130,246,.4); }
+.step.completed .step-circle { border-color:#34d399; background:#064e3b; }
+.step.failed .step-circle { border-color:#fb7185; background:#4c0519; }
+.step.running .step-circle { border-color:#fbbf24; background:#422006; animation:pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,.4)} 50%{box-shadow:0 0 16px 4px rgba(251,191,36,.2)} }
+.step-label { font-size:12px; color:#9ca3af; }
+.step.active .step-label, .step.running .step-label { color:#fff; }
+.step-line { flex:0 0 40px; height:3px; background:#374151; margin-bottom:24px; }
+.step-line.completed { background:#34d399; }
+.step-line.active { background:linear-gradient(90deg,#34d399,#3b82f6); }
+
+.progress-bar { width:100%; height:8px; background:#252736; border-radius:4px; overflow:hidden; margin:12px 0; }
+.progress-fill { height:100%; background:linear-gradient(90deg,#3b82f6,#34d399); border-radius:4px; transition:width .5s ease; }
+
+.stage-result { background:#0f1117; border:1px solid #2a2d3e; border-radius:8px; padding:12px; margin:8px 0; font-size:13px; }
+.stage-result .stage-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+.stage-result .stage-title { font-weight:600; color:#fff; }
 </style>
 </head>
 <body>
@@ -67,6 +94,7 @@ pre { font-size:12px; white-space:pre-wrap; word-break:break-all; }
   <button class="active" data-tab="overview">개요</button>
   <button data-tab="generate">스크립트 생성</button>
   <button data-tab="remake">리메이크</button>
+  <button data-tab="pipeline">🎬 파이프라인</button>
   <button data-tab="scripts">스크립트 목록</button>
   <button data-tab="competition">경쟁 분석</button>
   <button data-tab="schedule">업로드 스케줄</button>
@@ -125,6 +153,82 @@ pre { font-size:12px; white-space:pre-wrap; word-break:break-all; }
   </div>
 </div>
 
+<!-- 🎬 파이프라인 탭 -->
+<div class="tab-content" id="tab-pipeline">
+  <div class="card">
+    <h3>🎬 영상 제작 파이프라인</h3>
+    <p style="color:#9ca3af;margin-bottom:16px">생성된 스크립트를 선택하고 단계별로 영상을 제작합니다. 각 단계를 개별 실행하거나 전체를 한번에 실행할 수 있습니다.</p>
+
+    <!-- 스크립트 선택 -->
+    <div class="form-row" style="margin-bottom:16px">
+      <div class="form-group">
+        <label>스크립트 선택 *</label>
+        <select id="pipeScript">
+          <option value="">-- 스크립트를 선택하세요 --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>이미지 생성 엔진</label>
+        <select id="pipeImageProvider">
+          <option value="dalle">DALL-E 3 (OpenAI)</option>
+          <option value="flux">Flux (fal.ai)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 파이프라인 스테퍼 -->
+    <div class="pipeline-stepper" id="pipelineStepper">
+      <div class="step" id="step-script">
+        <div class="step-circle">📝</div>
+        <div class="step-label">스크립트</div>
+      </div>
+      <div class="step-line" id="line-1"></div>
+      <div class="step" id="step-tts">
+        <div class="step-circle">🎤</div>
+        <div class="step-label">TTS 음성</div>
+      </div>
+      <div class="step-line" id="line-2"></div>
+      <div class="step" id="step-media">
+        <div class="step-circle">🎨</div>
+        <div class="step-label">미디어</div>
+      </div>
+      <div class="step-line" id="line-3"></div>
+      <div class="step" id="step-compose">
+        <div class="step-circle">🎬</div>
+        <div class="step-label">영상 합성</div>
+      </div>
+      <div class="step-line" id="line-4"></div>
+      <div class="step" id="step-done">
+        <div class="step-circle">✅</div>
+        <div class="step-label">완료</div>
+      </div>
+    </div>
+
+    <!-- 진행률 -->
+    <div id="pipeProgress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+      <p id="progressMsg" style="font-size:13px;color:#9ca3af;text-align:center;margin:8px 0"></p>
+    </div>
+
+    <!-- 실행 버튼 -->
+    <div style="display:flex;gap:8px;margin:16px 0;flex-wrap:wrap">
+      <button class="btn btn-primary" id="btnRunFull" onclick="runFullPipeline()">🚀 전체 파이프라인 실행</button>
+      <button class="btn btn-secondary" onclick="runStage('tts')">🎤 TTS만</button>
+      <button class="btn btn-secondary" onclick="runStage('media')">🎨 미디어만</button>
+      <button class="btn btn-secondary" onclick="runStage('compose')">🎬 합성만</button>
+    </div>
+
+    <!-- 단계별 결과 -->
+    <div id="pipelineResults"></div>
+  </div>
+
+  <!-- 작업 히스토리 -->
+  <div class="card">
+    <h3>📋 작업 히스토리</h3>
+    <div id="jobHistory"></div>
+  </div>
+</div>
+
 <!-- 스크립트 목록 탭 -->
 <div class="tab-content" id="tab-scripts">
   <div class="card">
@@ -158,6 +262,9 @@ pre { font-size:12px; white-space:pre-wrap; word-break:break-all; }
 
 <script>
 const API = '';
+let currentJobId = null;
+let pollInterval = null;
+let pipelineState = { tts_dir: '', media_dir: '' };
 
 // 탭 전환
 document.querySelectorAll('nav button').forEach(btn => {
@@ -169,6 +276,7 @@ document.querySelectorAll('nav button').forEach(btn => {
     if (btn.dataset.tab === 'scripts') loadScripts();
     if (btn.dataset.tab === 'remake') loadRemake();
     if (btn.dataset.tab === 'schedule') loadScheduleUI();
+    if (btn.dataset.tab === 'pipeline') loadPipelineScripts();
   });
 });
 
@@ -243,6 +351,7 @@ async function generateScript() {
           <p><strong>📝 ${res.title}</strong></p>
           <p>장면 수: ${res.scenes}개 | SEO 점수: <span class="badge badge-green">${res.seo_score}/100</span></p>
           <p>파일: ${res.filename}</p>
+          <p style="margin-top:8px"><button class="btn btn-success" onclick="goToPipeline('${res.filename}')">🎬 파이프라인으로 이동 →</button></p>
           <details style="margin-top:8px"><summary style="cursor:pointer;color:#60a5fa">JSON 보기</summary>
           <pre>${JSON.stringify(res.script, null, 2)}</pre></details>
         </div>`;
@@ -253,6 +362,17 @@ async function generateScript() {
     toast('오류: ' + e.message, 'error');
   }
   btn.disabled = false; btn.textContent = '🤖 스크립트 생성';
+}
+
+function goToPipeline(filename) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-tab="pipeline"]').classList.add('active');
+  document.getElementById('tab-pipeline').classList.add('active');
+  loadPipelineScripts().then(() => {
+    document.getElementById('pipeScript').value = filename;
+    updateStepperFromScript();
+  });
 }
 
 // 리메이크 후보
@@ -288,11 +408,12 @@ async function loadScripts() {
     document.getElementById('scriptsList').innerHTML = '<div class="empty">아직 생성된 스크립트가 없습니다.</div>';
     return;
   }
-  let html = '<table><thead><tr><th>제목</th><th>카테고리</th><th>장면수</th><th>생성일</th></tr></thead><tbody>';
+  let html = '<table><thead><tr><th>제목</th><th>카테고리</th><th>장면수</th><th>생성일</th><th></th></tr></thead><tbody>';
   scripts.forEach(s => {
     html += `<tr><td><a href="/api/scripts/${s.filename}" target="_blank">${s.title || s.filename}</a></td>
       <td><span class="badge badge-blue">${s.category}</span></td>
-      <td>${s.scenes}</td><td>${s.created?.slice(0,10)}</td></tr>`;
+      <td>${s.scenes}</td><td>${s.created?.slice(0,10)}</td>
+      <td><button class="btn btn-secondary" onclick="goToPipeline('${s.filename}')" style="padding:4px 12px;font-size:12px">🎬 파이프라인</button></td></tr>`;
   });
   html += '</tbody></table>';
   document.getElementById('scriptsList').innerHTML = html;
@@ -336,6 +457,332 @@ async function loadScheduleUI() {
     html += '</tbody></table>';
   } catch(e) { html += '<p>스케줄 생성 실패</p>'; }
   document.getElementById('scheduleContent').innerHTML = html;
+}
+
+
+// ═══════════════════════════════════════════════
+// 파이프라인 기능
+// ═══════════════════════════════════════════════
+
+async function loadPipelineScripts() {
+  const scripts = await fetch(API + '/api/scripts').then(r=>r.json());
+  const sel = document.getElementById('pipeScript');
+  const currentVal = sel.value;
+  sel.innerHTML = '<option value="">-- 스크립트를 선택하세요 --</option>';
+  scripts.forEach(s => {
+    sel.innerHTML += `<option value="${s.filename}">${s.title || s.filename} (${s.scenes}장면)</option>`;
+  });
+  if (currentVal) sel.value = currentVal;
+  loadJobHistory();
+}
+
+function updateStepperFromScript() {
+  const filename = document.getElementById('pipeScript').value;
+  if (filename) {
+    setStepState('step-script', 'completed');
+  } else {
+    resetStepper();
+  }
+}
+
+document.getElementById('pipeScript')?.addEventListener('change', updateStepperFromScript);
+
+function resetStepper() {
+  ['step-script','step-tts','step-media','step-compose','step-done'].forEach(id => {
+    setStepState(id, '');
+  });
+  ['line-1','line-2','line-3','line-4'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.className = 'step-line'; }
+  });
+}
+
+function setStepState(stepId, state) {
+  const el = document.getElementById(stepId);
+  if (!el) return;
+  el.className = 'step' + (state ? ' ' + state : '');
+}
+
+function setLineState(lineId, state) {
+  const el = document.getElementById(lineId);
+  if (!el) return;
+  el.className = 'step-line' + (state ? ' ' + state : '');
+}
+
+// 전체 파이프라인 실행
+async function runFullPipeline() {
+  const filename = document.getElementById('pipeScript').value;
+  if (!filename) { toast('스크립트를 선택하세요', 'error'); return; }
+
+  const btn = document.getElementById('btnRunFull');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(API + '/api/pipeline/run', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        script_filename: filename,
+        image_provider: document.getElementById('pipeImageProvider').value,
+      })
+    }).then(r=>r.json());
+
+    if (res.job_id) {
+      currentJobId = res.job_id;
+      toast('파이프라인 시작!');
+      setStepState('step-script', 'completed');
+      setLineState('line-1', 'active');
+      showProgress(true);
+      startPolling(res.job_id);
+    }
+  } catch(e) {
+    toast('파이프라인 시작 실패: ' + e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
+// 단계별 실행
+async function runStage(stage) {
+  const filename = document.getElementById('pipeScript').value;
+  if (!filename) { toast('스크립트를 선택하세요', 'error'); return; }
+
+  let endpoint, body;
+  if (stage === 'tts') {
+    endpoint = '/api/pipeline/tts';
+    body = { script_filename: filename };
+  } else if (stage === 'media') {
+    endpoint = '/api/pipeline/media';
+    body = { script_filename: filename, image_provider: document.getElementById('pipeImageProvider').value };
+  } else if (stage === 'compose') {
+    endpoint = '/api/pipeline/compose';
+    body = { script_filename: filename, tts_dir: pipelineState.tts_dir, media_dir: pipelineState.media_dir };
+  }
+
+  try {
+    const res = await fetch(API + endpoint, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(r => {
+      if (!r.ok) return r.json().then(d => { throw new Error(d.detail || '요청 실패'); });
+      return r.json();
+    });
+
+    if (res.job_id) {
+      currentJobId = res.job_id;
+      toast(`${stage.toUpperCase()} 시작!`);
+      showProgress(true);
+      startPolling(res.job_id);
+    }
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+function showProgress(show) {
+  document.getElementById('pipeProgress').style.display = show ? 'block' : 'none';
+}
+
+function startPolling(jobId) {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(() => pollJobStatus(jobId), 2000);
+}
+
+async function pollJobStatus(jobId) {
+  try {
+    const job = await fetch(API + `/api/pipeline/status/${jobId}`).then(r=>r.json());
+
+    // 진행률 업데이트
+    document.getElementById('progressFill').style.width = (job.progress || 0) + '%';
+    document.getElementById('progressMsg').textContent = job.message || '';
+
+    // 스테퍼 업데이트 (전체 파이프라인용)
+    if (job.type === 'full_pipeline') {
+      updateFullPipelineStepper(job);
+    } else {
+      updateSingleStageStepper(job);
+    }
+
+    // 완료/실패 시 폴링 중지
+    if (job.status === 'completed' || job.status === 'failed') {
+      clearInterval(pollInterval);
+      pollInterval = null;
+      document.getElementById('btnRunFull').disabled = false;
+
+      if (job.status === 'completed') {
+        toast('작업 완료!');
+        renderJobResult(job);
+      } else {
+        toast('작업 실패: ' + job.message, 'error');
+      }
+      loadJobHistory();
+    }
+  } catch(e) {
+    console.error('Polling error:', e);
+  }
+}
+
+function updateFullPipelineStepper(job) {
+  const stages = job.stages || {};
+
+  // TTS
+  if (job.current_stage === 'tts') {
+    setStepState('step-tts', 'running');
+    setLineState('line-1', 'active');
+  }
+  if (stages.tts?.status === 'completed') {
+    setStepState('step-tts', 'completed');
+    setLineState('line-1', 'completed');
+    pipelineState.tts_dir = stages.tts.output_dir || '';
+  }
+  if (stages.tts?.status === 'failed') setStepState('step-tts', 'failed');
+  if (stages.tts?.status === 'skipped') setStepState('step-tts', 'completed');
+
+  // Media
+  if (job.current_stage === 'media') {
+    setStepState('step-media', 'running');
+    setLineState('line-2', 'active');
+  }
+  if (stages.media?.status === 'completed') {
+    setStepState('step-media', 'completed');
+    setLineState('line-2', 'completed');
+    pipelineState.media_dir = stages.media.output_dir || '';
+  }
+  if (stages.media?.status === 'failed') setStepState('step-media', 'failed');
+  if (stages.media?.status === 'skipped') setStepState('step-media', 'completed');
+
+  // Compose
+  if (job.current_stage === 'compose') {
+    setStepState('step-compose', 'running');
+    setLineState('line-3', 'active');
+  }
+  if (stages.compose?.status === 'completed') {
+    setStepState('step-compose', 'completed');
+    setLineState('line-3', 'completed');
+    setLineState('line-4', 'completed');
+    setStepState('step-done', 'completed');
+  }
+  if (stages.compose?.status === 'failed') setStepState('step-compose', 'failed');
+
+  // Done
+  if (job.current_stage === 'done') {
+    setStepState('step-done', 'completed');
+    setLineState('line-4', 'completed');
+  }
+}
+
+function updateSingleStageStepper(job) {
+  const stageMap = { tts: 'step-tts', media: 'step-media', compose: 'step-compose' };
+  const stepId = stageMap[job.type];
+  if (!stepId) return;
+
+  if (job.status === 'running') setStepState(stepId, 'running');
+  if (job.status === 'completed') {
+    setStepState(stepId, 'completed');
+    if (job.type === 'tts' && job.result?.output_dir) {
+      pipelineState.tts_dir = job.result.output_dir;
+      setLineState('line-1', 'completed');
+    }
+    if (job.type === 'media' && job.result?.output_dir) {
+      pipelineState.media_dir = job.result.output_dir;
+      setLineState('line-2', 'completed');
+    }
+    if (job.type === 'compose') {
+      setLineState('line-3', 'completed');
+      setLineState('line-4', 'completed');
+      setStepState('step-done', 'completed');
+    }
+  }
+  if (job.status === 'failed') setStepState(stepId, 'failed');
+}
+
+function renderJobResult(job) {
+  const container = document.getElementById('pipelineResults');
+  let html = '';
+
+  if (job.type === 'full_pipeline' && job.stages) {
+    const stages = job.stages;
+    html += '<h4 style="color:#fff;margin:16px 0 8px">📊 파이프라인 결과</h4>';
+
+    // TTS 결과
+    if (stages.tts) {
+      const s = stages.tts;
+      const statusBadge = s.status === 'completed' ? '<span class="badge badge-green">완료</span>'
+        : s.status === 'skipped' ? '<span class="badge badge-yellow">스킵</span>'
+        : '<span class="badge badge-red">실패</span>';
+      html += `<div class="stage-result">
+        <div class="stage-header"><span class="stage-title">🎤 TTS 음성 생성</span>${statusBadge}</div>
+        ${s.files_count ? `<p style="color:#9ca3af">파일 ${s.files_count}개 | ${(s.total_chars||0).toLocaleString()}자</p>` : ''}
+        ${s.error ? `<p style="color:#fb7185">${s.error}</p>` : ''}
+      </div>`;
+    }
+
+    // Media 결과
+    if (stages.media) {
+      const s = stages.media;
+      const statusBadge = s.status === 'completed' ? '<span class="badge badge-green">완료</span>'
+        : s.status === 'skipped' ? '<span class="badge badge-yellow">스킵</span>'
+        : '<span class="badge badge-red">실패</span>';
+      html += `<div class="stage-result">
+        <div class="stage-header"><span class="stage-title">🎨 미디어 생성</span>${statusBadge}</div>
+        ${s.files_count ? `<p style="color:#9ca3af">파일 ${s.files_count}개${s.errors?.length ? ` | 오류 ${s.errors.length}개` : ''}</p>` : ''}
+        ${s.errors?.length ? `<details><summary style="cursor:pointer;color:#fbbf24;font-size:12px">오류 상세</summary><pre style="color:#fb7185">${s.errors.join('\n')}</pre></details>` : ''}
+        ${s.error ? `<p style="color:#fb7185">${s.error}</p>` : ''}
+      </div>`;
+    }
+
+    // Compose 결과
+    if (stages.compose) {
+      const s = stages.compose;
+      const statusBadge = s.status === 'completed' ? '<span class="badge badge-green">완료</span>'
+        : s.status === 'skipped' ? '<span class="badge badge-yellow">스킵</span>'
+        : '<span class="badge badge-red">실패</span>';
+      html += `<div class="stage-result">
+        <div class="stage-header"><span class="stage-title">🎬 영상 합성</span>${statusBadge}</div>
+        ${s.video_path ? `<p style="color:#9ca3af">출력: ${s.filename || s.video_path}</p>` : ''}
+        ${s.video_path && s.video_path.endsWith('.mp4') ? `
+          <div style="margin-top:8px">
+            <video controls style="max-width:100%;border-radius:8px;background:#000" src="/api/pipeline/preview/${s.filename}"></video>
+          </div>` : ''}
+        ${s.video_path && s.video_path.endsWith('.json') ? `<p style="color:#fbbf24;font-size:12px">JSON2Video API 키가 없어 레시피만 생성됨</p>` : ''}
+        ${s.error ? `<p style="color:#fb7185">${s.error}</p>` : ''}
+      </div>`;
+    }
+  } else if (job.result) {
+    html += `<div class="stage-result">
+      <div class="stage-header"><span class="stage-title">${job.type.toUpperCase()} 결과</span><span class="badge badge-green">완료</span></div>
+      <pre>${JSON.stringify(job.result, null, 2)}</pre>
+    </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+async function loadJobHistory() {
+  try {
+    const jobs = await fetch(API + '/api/pipeline/jobs').then(r=>r.json());
+    const container = document.getElementById('jobHistory');
+    if (!jobs.length) {
+      container.innerHTML = '<div class="empty">아직 실행된 작업이 없습니다.</div>';
+      return;
+    }
+
+    let html = '<table><thead><tr><th>ID</th><th>유형</th><th>스크립트</th><th>상태</th><th>메시지</th><th>시간</th></tr></thead><tbody>';
+    jobs.slice(0, 20).forEach(j => {
+      const statusClass = j.status === 'completed' ? 'badge-green' : j.status === 'running' ? 'badge-yellow' : 'badge-red';
+      const statusLabel = j.status === 'completed' ? '완료' : j.status === 'running' ? '실행중' : '실패';
+      html += `<tr>
+        <td style="font-family:monospace">${j.id}</td>
+        <td><span class="badge badge-blue">${j.type}</span></td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${j.script || '-'}</td>
+        <td><span class="badge ${statusClass}">${statusLabel}</span></td>
+        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;color:#9ca3af">${j.message || ''}</td>
+        <td style="color:#6b7280;font-size:12px">${j.created_at?.slice(11,19) || ''}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch(e) {
+    document.getElementById('jobHistory').innerHTML = '<div class="empty">히스토리 로드 실패</div>';
+  }
 }
 
 init();

@@ -6,6 +6,9 @@ Render 배포용 진입점
 import os
 import json
 import time
+import uuid
+import threading
+import traceback
 from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -28,7 +31,10 @@ config.OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 from modules.script_generator import generate_script, validate_script, save_script, generate_from_remake_candidate
 from modules.seo_optimizer import optimize_seo, analyze_competition
-from modules.publisher import create_upload_schedule, auto_detect_shorts_segments
+from modules.tts_engine import generate_from_script as tts_generate
+from modules.media_generator import generate_from_script as media_generate
+from modules.video_composer import compose_video, create_video_recipe
+from modules.publisher import create_upload_schedule, auto_detect_shorts_segments, upload_from_script
 
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
@@ -95,6 +101,43 @@ class ScheduleRequest(BaseModel):
     preferred_days: list[int] = Field(default=[1, 3, 5], description="선호 요일 (0=월~6=일)")
     preferred_time: str = Field("18:00", description="업로드 시간")
     start_date: str = Field("", description="시작일 (YYYY-MM-DD)")
+
+
+class PipelineRequest(BaseModel):
+    script_filename: str = Field(..., description="스크립트 파일명")
+    voice_id: str = Field("", description="ElevenLabs 보이스 ID")
+    image_provider: str = Field("dalle", description="이미지 제공자 (dalle/flux)")
+    skip_tts: bool = Field(False, description="TTS 건너뛰기")
+    skip_media: bool = Field(False, description="미디어 건너뛰기")
+    skip_compose: bool = Field(False, description="영상합성 건너뛰기")
+
+
+class TTSRequest(BaseModel):
+    script_filename: str = Field(..., description="스크립트 파일명")
+    voice_id: str = Field("", description="ElevenLabs 보이스 ID")
+
+
+class MediaRequest(BaseModel):
+    script_filename: str = Field(..., description="스크립트 파일명")
+    image_provider: str = Field("dalle", description="이미지 제공자 (dalle/flux)")
+
+
+class ComposeRequest(BaseModel):
+    script_filename: str = Field(..., description="스크립트 파일명")
+    tts_dir: str = Field("", description="TTS 결과 디렉토리")
+    media_dir: str = Field("", description="미디어 결과 디렉토리")
+
+
+# ─── 파이프라인 잡 추적 ──────────────────────────────────
+# 인메모리 잡 상태 (서버 재시작 시 초기화)
+pipeline_jobs: dict = {}
+
+
+def update_job(job_id: str, **kwargs):
+    """잡 상태 업데이트 (thread-safe)"""
+    if job_id in pipeline_jobs:
+        pipeline_jobs[job_id].update(kwargs)
+        pipeline_jobs[job_id]["updated_at"] = datetime.now().isoformat()
 
 
 # ─── 유틸 ────────────────────────────────────────────────
@@ -330,6 +373,297 @@ async def api_create_schedule(req: ScheduleRequest):
         preferred_time=req.preferred_time,
     )
     return schedule
+
+
+# ── 파이프라인 실행 (단계별) ──
+
+@app.post("/api/pipeline/tts")
+async def api_pipeline_tts(req: TTSRequest, background_tasks: BackgroundTasks):
+    """Stage 3-A: TTS 음성 생성"""
+    script_path = OUTPUT_DIR / req.script_filename
+    if not script_path.exists():
+        raise HTTPException(404, "스크립트 파일을 찾을 수 없습니다.")
+
+    if not config.ELEVENLABS_API_KEY or config.ELEVENLABS_API_KEY.startswith("placeholder"):
+        raise HTTPException(400, "ELEVENLABS_API_KEY가 설정되지 않았습니다. Render 환경변수에서 실제 키를 입력해주세요.")
+
+    job_id = str(uuid.uuid4())[:8]
+    pipeline_jobs[job_id] = {
+        "id": job_id, "type": "tts", "status": "running",
+        "script": req.script_filename, "created_at": datetime.now().isoformat(),
+        "progress": 0, "message": "TTS 생성 시작...", "result": None
+    }
+
+    def run_tts():
+        try:
+            with open(script_path, encoding="utf-8") as f:
+                script = json.load(f)
+            scenes = script.get("scenes", [])
+            total = len([s for s in scenes if s.get("narration", {}).get("text")])
+
+            update_job(job_id, message=f"0/{total} 장면 처리 중...")
+            result = tts_generate(script, voice_id=req.voice_id or None)
+
+            update_job(job_id, status="completed", progress=100,
+                       message=f"TTS 완료! {len(result.get('files', []))}개 파일 생성",
+                       result={"files_count": len(result.get("files", [])),
+                               "total_chars": result.get("total_chars", 0),
+                               "output_dir": str(Path(result["files"][0]).parent) if result.get("files") else ""})
+        except Exception as e:
+            update_job(job_id, status="failed", message=f"TTS 실패: {str(e)}")
+
+    background_tasks.add_task(run_tts)
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.post("/api/pipeline/media")
+async def api_pipeline_media(req: MediaRequest, background_tasks: BackgroundTasks):
+    """Stage 3-B: AI 이미지 + 스톡 미디어 생성"""
+    script_path = OUTPUT_DIR / req.script_filename
+    if not script_path.exists():
+        raise HTTPException(404, "스크립트 파일을 찾을 수 없습니다.")
+
+    has_key = (req.image_provider == "dalle" and config.OPENAI_API_KEY and not config.OPENAI_API_KEY.startswith("placeholder")) or \
+              (req.image_provider == "flux" and os.environ.get("FAL_KEY"))
+    if not has_key and not (config.PEXELS_API_KEY and not config.PEXELS_API_KEY.startswith("placeholder")):
+        raise HTTPException(400, f"이미지 생성 API 키가 설정되지 않았습니다. ({req.image_provider.upper()} 또는 PEXELS)")
+
+    job_id = str(uuid.uuid4())[:8]
+    pipeline_jobs[job_id] = {
+        "id": job_id, "type": "media", "status": "running",
+        "script": req.script_filename, "created_at": datetime.now().isoformat(),
+        "progress": 0, "message": "미디어 생성 시작...", "result": None
+    }
+
+    def run_media():
+        try:
+            with open(script_path, encoding="utf-8") as f:
+                script = json.load(f)
+            result = media_generate(script, image_provider=req.image_provider)
+            update_job(job_id, status="completed", progress=100,
+                       message=f"미디어 완료! {len(result.get('files', []))}개 파일, {len(result.get('errors', []))}개 오류",
+                       result={"files_count": len(result.get("files", [])),
+                               "errors": result.get("errors", []),
+                               "output_dir": str(Path(result["files"][0]).parent) if result.get("files") else "",
+                               "scenes": {str(k): v for k, v in result.get("scenes", {}).items()}})
+        except Exception as e:
+            update_job(job_id, status="failed", message=f"미디어 생성 실패: {str(e)}")
+
+    background_tasks.add_task(run_media)
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.post("/api/pipeline/compose")
+async def api_pipeline_compose(req: ComposeRequest, background_tasks: BackgroundTasks):
+    """Stage 4: JSON2Video 영상 합성"""
+    script_path = OUTPUT_DIR / req.script_filename
+    if not script_path.exists():
+        raise HTTPException(404, "스크립트 파일을 찾을 수 없습니다.")
+
+    job_id = str(uuid.uuid4())[:8]
+    pipeline_jobs[job_id] = {
+        "id": job_id, "type": "compose", "status": "running",
+        "script": req.script_filename, "created_at": datetime.now().isoformat(),
+        "progress": 0, "message": "영상 합성 시작...", "result": None
+    }
+
+    def run_compose():
+        try:
+            with open(script_path, encoding="utf-8") as f:
+                script = json.load(f)
+
+            # TTS/미디어 결과 로드 (디렉토리에서)
+            tts_result = None
+            media_result = None
+            if req.tts_dir and os.path.isdir(req.tts_dir):
+                tts_result = _load_stage_result(req.tts_dir, "tts")
+            if req.media_dir and os.path.isdir(req.media_dir):
+                media_result = _load_stage_result(req.media_dir, "media")
+
+            update_job(job_id, message="레시피 생성 중...")
+            video_path = compose_video(script, tts_result=tts_result, media_result=media_result)
+
+            update_job(job_id, status="completed", progress=100,
+                       message=f"영상 합성 완료!",
+                       result={"video_path": video_path,
+                               "filename": os.path.basename(video_path)})
+        except Exception as e:
+            update_job(job_id, status="failed", message=f"영상 합성 실패: {str(e)}")
+
+    background_tasks.add_task(run_compose)
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.post("/api/pipeline/run")
+async def api_pipeline_full(req: PipelineRequest, background_tasks: BackgroundTasks):
+    """전체 파이프라인 실행 (스크립트 → TTS → 미디어 → 합성)"""
+    script_path = OUTPUT_DIR / req.script_filename
+    if not script_path.exists():
+        raise HTTPException(404, "스크립트 파일을 찾을 수 없습니다.")
+
+    job_id = str(uuid.uuid4())[:8]
+    pipeline_jobs[job_id] = {
+        "id": job_id, "type": "full_pipeline", "status": "running",
+        "script": req.script_filename, "created_at": datetime.now().isoformat(),
+        "progress": 0, "current_stage": "init", "stages": {},
+        "message": "파이프라인 시작...", "result": None
+    }
+
+    def run_pipeline():
+        try:
+            with open(script_path, encoding="utf-8") as f:
+                script = json.load(f)
+
+            stages_done = {}
+
+            # Stage TTS
+            if not req.skip_tts:
+                update_job(job_id, current_stage="tts", progress=10,
+                           message="🎤 TTS 음성 생성 중...")
+                try:
+                    tts_result = tts_generate(script, voice_id=req.voice_id or None)
+                    stages_done["tts"] = {
+                        "status": "completed",
+                        "files_count": len(tts_result.get("files", [])),
+                        "total_chars": tts_result.get("total_chars", 0),
+                        "output_dir": str(Path(tts_result["files"][0]).parent) if tts_result.get("files") else ""
+                    }
+                    update_job(job_id, progress=33, stages=stages_done,
+                               message=f"TTS 완료 ({len(tts_result.get('files', []))}개)")
+                except Exception as e:
+                    stages_done["tts"] = {"status": "failed", "error": str(e)}
+                    update_job(job_id, stages=stages_done)
+                    tts_result = None
+            else:
+                tts_result = None
+                stages_done["tts"] = {"status": "skipped"}
+
+            # Stage Media
+            if not req.skip_media:
+                update_job(job_id, current_stage="media", progress=40,
+                           message="🎨 미디어 소스 생성 중...")
+                try:
+                    media_result = media_generate(script, image_provider=req.image_provider)
+                    stages_done["media"] = {
+                        "status": "completed",
+                        "files_count": len(media_result.get("files", [])),
+                        "errors": media_result.get("errors", []),
+                        "output_dir": str(Path(media_result["files"][0]).parent) if media_result.get("files") else ""
+                    }
+                    update_job(job_id, progress=66, stages=stages_done,
+                               message=f"미디어 완료 ({len(media_result.get('files', []))}개)")
+                except Exception as e:
+                    stages_done["media"] = {"status": "failed", "error": str(e)}
+                    update_job(job_id, stages=stages_done)
+                    media_result = None
+            else:
+                media_result = None
+                stages_done["media"] = {"status": "skipped"}
+
+            # Stage Compose
+            if not req.skip_compose:
+                update_job(job_id, current_stage="compose", progress=75,
+                           message="🎬 영상 합성 중...")
+                try:
+                    video_path = compose_video(script, tts_result=tts_result, media_result=media_result)
+                    stages_done["compose"] = {
+                        "status": "completed",
+                        "video_path": video_path,
+                        "filename": os.path.basename(video_path)
+                    }
+                    update_job(job_id, progress=95, stages=stages_done,
+                               message="영상 합성 완료!")
+                except Exception as e:
+                    stages_done["compose"] = {"status": "failed", "error": str(e)}
+                    update_job(job_id, stages=stages_done)
+                    video_path = None
+            else:
+                video_path = None
+                stages_done["compose"] = {"status": "skipped"}
+
+            # 완료
+            update_job(job_id, status="completed", progress=100,
+                       current_stage="done", stages=stages_done,
+                       message="✅ 파이프라인 완료!",
+                       result={
+                           "stages": stages_done,
+                           "video_path": video_path if video_path else None,
+                       })
+
+            # 파이프라인 리포트 저장
+            report = {
+                "timestamp": datetime.now().isoformat(),
+                "script": req.script_filename,
+                "stages": stages_done,
+                "elapsed_seconds": round(time.time() - time.mktime(
+                    datetime.fromisoformat(pipeline_jobs[job_id]["created_at"]).timetuple()), 1),
+            }
+            report_path = OUTPUT_DIR / f"pipeline_report_{job_id}.json"
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            update_job(job_id, status="failed",
+                       message=f"파이프라인 실패: {str(e)}\n{traceback.format_exc()}")
+
+    background_tasks.add_task(run_pipeline)
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.get("/api/pipeline/status/{job_id}")
+async def api_pipeline_status(job_id: str):
+    """파이프라인 잡 상태 조회"""
+    job = pipeline_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, f"잡 {job_id}를 찾을 수 없습니다.")
+    return job
+
+
+@app.get("/api/pipeline/jobs")
+async def api_pipeline_jobs():
+    """모든 파이프라인 잡 목록"""
+    return sorted(pipeline_jobs.values(), key=lambda x: x.get("created_at", ""), reverse=True)
+
+
+@app.get("/api/pipeline/preview/{filename:path}")
+async def api_pipeline_preview(filename: str):
+    """생성된 파일 미리보기/다운로드"""
+    # output 디렉토리 내 파일만 허용
+    file_path = OUTPUT_DIR / filename
+    if not file_path.exists():
+        # 절대 경로 시도
+        file_path = Path(filename)
+    if not file_path.exists():
+        raise HTTPException(404, "파일을 찾을 수 없습니다.")
+
+    # 보안: output 디렉토리 내 파일인지 확인
+    try:
+        file_path.resolve().relative_to(OUTPUT_DIR.resolve())
+    except ValueError:
+        raise HTTPException(403, "접근이 허용되지 않는 경로입니다.")
+
+    return FileResponse(str(file_path))
+
+
+def _load_stage_result(dir_path: str, stage_type: str) -> dict:
+    """디렉토리에서 이전 단계 결과를 재구성"""
+    result = {"files": [], "scenes": {}}
+    dir_p = Path(dir_path)
+    if not dir_p.exists():
+        return result
+
+    for f in sorted(dir_p.iterdir()):
+        if f.is_file():
+            result["files"].append(str(f))
+            # scene_01_xxx.ext 패턴에서 scene ID 추출
+            name = f.stem
+            if name.startswith("scene_"):
+                try:
+                    sid = int(name.split("_")[1])
+                    result["scenes"][sid] = {"file": str(f), "type": stage_type}
+                except (IndexError, ValueError):
+                    pass
+    return result
 
 
 # ── 파이프라인 보고서 ──
