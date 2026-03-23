@@ -33,7 +33,7 @@ from modules.script_generator import generate_script, validate_script, save_scri
 from modules.seo_optimizer import optimize_seo, analyze_competition
 from modules.tts_engine import generate_from_script as tts_generate
 from modules.media_generator import generate_from_script as media_generate
-from modules.video_composer import compose_video, create_video_recipe
+from modules.video_composer import compose_video, compose_with_ffmpeg, create_video_recipe
 from modules.publisher import create_upload_schedule, auto_detect_shorts_segments, upload_from_script
 
 BASE_DIR = Path(__file__).parent
