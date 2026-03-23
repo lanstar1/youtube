@@ -79,7 +79,7 @@ CATEGORIES = {
 TTS_SETTINGS = {
     "provider": "elevenlabs",  # elevenlabs | supertone
     "model": "eleven_multilingual_v2",
-    "voice_id": "",  # 클론 후 설정
+    "voice_id": os.environ.get("ELEVENLABS_VOICE_ID", "X8It1z772AWCI8PNW8D3"),
     "stability": 0.5,
     "similarity_boost": 0.75,
     "style": 0.3,
