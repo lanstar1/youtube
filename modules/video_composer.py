@@ -59,7 +59,28 @@ def compose_with_ffmpeg(
     scene_clips = []
     concat_list_path = work_dir / "concat_list.txt"
 
-    print(f"🎬 FFmpeg 로컬 합성 시작 ({len(scenes)}개 장면)")
+    # 출력 해상도 (Render 무료 플랜 메모리 절약)
+    OUT_W, OUT_H = 1280, 720
+
+    print(f"🎬 FFmpeg 로컬 합성 시작 ({len(scenes)}개 장면, {OUT_W}x{OUT_H})")
+
+    # 이미지 전처리: 720p로 리사이즈 (메모리 절약)
+    if media_result:
+        for sid, info in media_result.get("scenes", {}).items():
+            fpath = info.get("file")
+            if fpath and os.path.exists(str(fpath)) and str(fpath).lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                resized = str(work_dir / f"img_{sid:03d}.jpg")
+                try:
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", str(fpath),
+                        "-vf", f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease,"
+                               f"pad={OUT_W}:{OUT_H}:(ow-iw)/2:(oh-ih)/2:black",
+                        "-q:v", "3", resized
+                    ], capture_output=True, check=True, timeout=15)
+                    info["file"] = resized  # 리사이즈된 파일로 교체
+                    print(f"  📐 Scene {sid} 이미지 리사이즈 완료")
+                except Exception as e:
+                    print(f"  ⚠️ Scene {sid} 리사이즈 실패: {e}")
 
     for scene in scenes:
         sid = scene.get("scene_id", 0)
@@ -115,9 +136,14 @@ def compose_with_ffmpeg(
                 print(f"  ⚠️ Scene {sid}: 클립 생성 실패")
 
         except subprocess.CalledProcessError as e:
-            print(f"  ❌ Scene {sid} FFmpeg 오류: {e.stderr.decode() if e.stderr else str(e)}")
+            stderr = e.stderr.decode()[:200] if e.stderr else str(e)
+            print(f"  ❌ Scene {sid} FFmpeg 오류: {stderr}")
         except Exception as e:
             print(f"  ❌ Scene {sid} 오류: {e}")
+
+        # 메모리 정리 (Render 무료 플랜 메모리 절약)
+        import gc
+        gc.collect()
 
     if not scene_clips:
         raise RuntimeError("합성 가능한 장면이 없습니다.")
@@ -165,8 +191,8 @@ def _create_clip_image_audio(image_path: str, audio_path: str, output_path: str,
         "-loop", "1",
         "-i", image_path,
         "-i", audio_path,
-        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+               "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,"
                "format=yuv420p",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-c:a", "aac", "-b:a", "128k",
@@ -185,8 +211,8 @@ def _create_clip_image_only(image_path: str, output_path: str, duration: float):
         "-loop", "1",
         "-i", image_path,
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+               "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,"
                "format=yuv420p",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-c:a", "aac", "-b:a", "128k",
@@ -208,8 +234,8 @@ def _create_clip_video_audio(video_path: str, audio_path: str, output_path: str,
         "ffmpeg", "-y",
         "-i", video_path,
         "-i", audio_path,
-        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+               "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,"
                "format=yuv420p",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-c:a", "aac", "-b:a", "128k",
@@ -227,8 +253,8 @@ def _create_clip_video_only(video_path: str, output_path: str, duration: float):
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
-        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+               "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,"
                "format=yuv420p",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-c:a", "aac", "-b:a", "128k",
@@ -249,7 +275,7 @@ def _create_clip_audio_only(audio_path: str, output_path: str,
     # drawtext 없이 단순 검은 배경 (한글 폰트 문제 회피)
     cmd = [
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c=0x1a1b2e:s=1920x1080:d={audio_dur + 0.3}:r=24",
+        "-f", "lavfi", "-i", f"color=c=0x1a1b2e:s=1280x720:d={audio_dur + 0.3}:r=24",
         "-i", audio_path,
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-c:a", "aac", "-b:a", "128k",
