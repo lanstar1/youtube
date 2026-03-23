@@ -62,8 +62,9 @@ app.add_middleware(
 )
 
 # 정적 파일 서빙
-if (BASE_DIR / "frontend").exists():
-    app.mount("/static", StaticFiles(directory=str(BASE_DIR / "frontend" / "static")), name="static")
+static_dir = BASE_DIR / "frontend" / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 # ─── Pydantic 모델 ──────────────────────────────────────
